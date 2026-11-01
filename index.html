@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <title>レジシステム</title>
+</head>
+
+<body style="font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 1px; color: #000000;">
+<div style="max-width: 9999px; margin: 0 auto; padding: 30px;">
+  <h2 style="text-align: center; margin-bottom: 25px; color: #2c3e50;">お買い物レジ</h2>
+
+  <!-- 商品・個数選択 -->
+  <div style="margin-bottom: 20px;">
+    <label for="item" style="display: block; font-weight: bold; margin-bottom: 8px; color: #000000;">商品を選択</label>
+    <select id="item" onchange="calculateTotal()" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 16px;">
+      <option value="700">ふわ姫パン (700円)</option>
+    </select>
+  </div>
+
+  <div style="margin-bottom: 20px;">
+    <label for="quantity" style="display: block; font-weight: bold; margin-bottom: 8px; color: #000000;">個数</label>
+    <input type="number" id="quantity" value="1" min="1" oninput="calculateTotal()" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 16px;">
+  </div>
+
+  <!-- 結果・お釣り -->
+  <div style="margin-top: 25px; padding: 15px; background-color: #ecf0f1; border-radius: 4px; font-size: 18px;">
+    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 22px; font-weight: bold; color: #e74c3c; border-bottom: 2px dashed #ccc; padding-bottom: 10px;">
+      <span>合計金額:</span>
+      <span><span id="display-total">0</span> 円</span>
+    </div>
+
+    <div style="margin-top: 15px; margin-bottom: 20px;">
+      <label for="cash" style="display: block; font-weight: bold; margin-bottom: 8px; color: #000000;">預かり金額 (お札・小銭)</label>
+      <input type="number" id="cash" placeholder="金額を入力" oninput="calculateChange()" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 16px;">
+    </div>
+
+    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: min(90px, 14vw); font-weight: bold; color: #27ae60;">
+      <span>お釣り:</span>
+      <span><span id="display-change">0</span> 円</span>
+    </div>
+  </div>
+
+  <!-- 売上登録 -->
+  <button id="submit-btn" onclick="submitSale()"
+    onmouseover="this.style.backgroundColor='#27ae60'" onmouseout="this.style.backgroundColor='#2ecc71'"
+    style="width: 100%; padding: 14px; border: none; border-radius: 4px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: 0.2s; background-color: #2ecc71; color: white;">確定</button>
+  <div id="status" style="text-align: center; font-weight: bold; margin-top: 15px;"></div>
+
+  <!-- 記録・書き出し -->
+  <div style="margin-top: 40px; padding-top: 20px; border-top: 2px solid #ccc;">
+    <h3 style="margin: 0 0 12px 0; color: #2c3e50;">売上の記録</h3>
+    <div style="font-size: 18px; margin-bottom: 6px;">
+      記録：<span id="sum-count" style="font-weight: bold;">0</span> 件 ／ 売上合計：<span id="sum-amount" style="font-weight: bold;">0</span> 円
+    </div>
+    <div style="font-size: 14px; color: #555555; margin-bottom: 4px;">
+      うちCSV未書き出し：<span id="sum-unexported">0</span> 件
+    </div>
+    <div id="last-sale" style="font-size: 14px; color: #555555; margin-bottom: 12px;"></div>
+
+    <button onclick="exportCsv()" style="width: 100%; padding: 14px; border: none; border-radius: 4px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; background-color: #3498db; color: white;">CSVに書き出す（Excel・スプレッドシート用）</button>
+    <button onclick="undoLast()" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 15px; cursor: pointer; margin-top: 10px; background-color: #ffffff; color: #000000;">直前の売上を取り消す</button>
+    <button onclick="deleteExported()" style="width: 100%; padding: 12px; border: 1px solid #e74c3c; border-radius: 4px; font-size: 15px; cursor: pointer; margin-top: 10px; background-color: #ffffff; color: #e74c3c;">書き出し済みの売上を削除する</button>
+  </div>
+</div>
+
+<script>
+  const STORAGE_KEY = 'salesRecords';
+  let currentTotal = 0;
+
+  // ---------- 端末内の売上記録 ----------
+  function loadSales() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+    catch (e) { return []; }
+  }
+  function saveSales(list) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    updateSummary();
+  }
+
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function formatDate(iso) {
+    const d = new Date(iso);
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+           pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+
+  function updateSummary() {
+    const list = loadSales();
+    const amount = list.reduce((sum, s) => sum + s.total, 0);
+    const unexported = list.filter(s => !s.exported).length;
+    document.getElementById('sum-count').innerText = list.length;
+    document.getElementById('sum-amount').innerText = amount.toLocaleString();
+    document.getElementById('sum-unexported').innerText = unexported;
+    if (list.length > 0) {
+      const last = list[list.length - 1];
+      document.getElementById('last-sale').innerText =
+        '直前：' + formatDate(last.time) + '　' + last.itemName + ' ×' + last.quantity + '　' + last.total.toLocaleString() + '円';
+    } else {
+      document.getElementById('last-sale').innerText = '';
+    }
+  }
+
+  // ---------- 合計・お釣り ----------
+  function calculateTotal() {
+    const price = parseInt(document.getElementById('item').value);
+    const quantity = parseInt(document.getElementById('quantity').value);
+    if (isNaN(quantity) || quantity < 1) {
+      currentTotal = 0;
+      document.getElementById('display-total').innerText = '0';
+      document.getElementById('submit-btn').style.display = 'none';
+      calculateChange();
+      return;
+    }
+    currentTotal = price * quantity;
+    document.getElementById('display-total').innerText = currentTotal.toLocaleString();
+    document.getElementById('submit-btn').style.display = 'block';
+    calculateChange();
+  }
+
+  function calculateChange() {
+    const cashInput = document.getElementById('cash').value;
+    if (cashInput === '') {
+      document.getElementById('display-change').innerText = '0';
+      return;
+    }
+    const change = parseInt(cashInput) - currentTotal;
+    document.getElementById('display-change').innerText =
+      change >= 0 ? change.toLocaleString() : '不足しています';
+  }
+
+  // ---------- 確定：端末に記録 ----------
+  function submitSale() {
+    const itemSelect = document.getElementById('item');
+    const itemName = itemSelect.options[itemSelect.selectedIndex].text.split(' (')[0];
+    const quantity = parseInt(document.getElementById('quantity').value);
+    const cashInput = document.getElementById('cash').value;
+
+    if (currentTotal < 1) {
+      alert('個数は1以上を入力してください。');
+      return;
+    }
+    if (cashInput !== '' && (parseInt(cashInput) - currentTotal) < 0) {
+      alert('お預かり金額が不足しています。');
+      return;
+    }
+
+    const list = loadSales();
+    list.push({
+      time: new Date().toISOString(),
+      itemName: itemName,
+      quantity: quantity,
+      total: currentTotal,
+      exported: false
+    });
+    try {
+      saveSales(list);
+    } catch (e) {
+      alert('端末に保存できませんでした。この売上は記録されていません。');
+      return;
+    }
+
+    // フォームのリセット
+    document.getElementById('quantity').value = 1;
+    document.getElementById('cash').value = '';
+    calculateTotal();
+    setStatus('#2ecc71', '売上を記録しました！（' + list.length + '件目）');
+  }
+
+  // ---------- 直前の売上を取り消す ----------
+  function undoLast() {
+    const list = loadSales();
+    if (list.length === 0) {
+      alert('取り消せる売上がありません。');
+      return;
+    }
+    const last = list[list.length - 1];
+    if (!confirm('直前の売上を取り消しますか？\n' + last.itemName + ' ×' + last.quantity + '　' + last.total.toLocaleString() + '円')) return;
+    list.pop();
+    saveSales(list);
+    setStatus('#e67e22', '直前の売上を取り消しました。');
+  }
+
+  // ---------- CSV書き出し ----------
+  function csvEscape(v) {
+    const s = String(v);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  async function exportCsv() {
+    const list = loadSales();
+    if (list.length === 0) {
+      alert('書き出す売上がありません。');
+      return;
+    }
+    const lines = ['日時,商品名,個数,合計金額'];
+    list.forEach(s => {
+      lines.push([formatDate(s.time), s.itemName, s.quantity, s.total].map(csvEscape).join(','));
+    });
+    // 先頭の\ufeffは、Excelで日本語が文字化けしないための目印
+    const csv = '\ufeff' + lines.join('\r\n') + '\r\n';
+
+    const now = new Date();
+    const fileName = 'sales_' + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) +
+                     '_' + pad(now.getHours()) + pad(now.getMinutes()) + '.csv';
+    const file = new File([csv], fileName, { type: 'text/csv' });
+
+    let done = false;
+    // iPad：共有メニュー（メール、AirDrop、ファイル等）を開く
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: fileName });
+        done = true;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;   // 共有メニューを閉じただけ
+      }
+    }
+    // 共有が使えないとき：ダウンロード
+    if (!done) {
+      const url = URL.createObjectURL(file);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      done = true;
+    }
+
+    if (done) {
+      saveSales(list.map(s => Object.assign({}, s, { exported: true })));
+      setStatus('#2ecc71', 'CSVを書き出しました。保存できたか必ず確認してください。');
+    }
+  }
+
+  // ---------- 書き出し済みの削除 ----------
+  function deleteExported() {
+    const list = loadSales();
+    const exportedCount = list.filter(s => s.exported).length;
+    if (exportedCount === 0) {
+      alert('削除できる「書き出し済み」の売上がありません。');
+      return;
+    }
+    if (!confirm('書き出し済みの売上 ' + exportedCount + ' 件を、この端末から削除します。\nCSVファイルが保存できていることを確認しましたか？\n（削除すると元に戻せません）')) return;
+    saveSales(list.filter(s => !s.exported));
+    setStatus('#e67e22', '書き出し済みの売上を削除しました。');
+  }
+
+  function setStatus(color, text) {
+    const el = document.getElementById('status');
+    el.style.color = color;
+    el.innerText = text;
+  }
+
+  // ---------- 起動時の処理 ----------
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js');
+  }
+  // 端末のデータが自動で消されにくくなるよう、保存の継続を依頼する
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+
+  calculateTotal();
+  updateSummary();
+</script>
+</body>
+</html>
